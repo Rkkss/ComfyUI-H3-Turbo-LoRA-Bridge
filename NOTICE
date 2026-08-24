@@ -1,0 +1,16 @@
+H3 Turbo LoRA Bridge
+
+This project contains code adapted from:
+  ComfyUI-MiniMax-H3-Turbo
+  https://github.com/Larryvrh/ComfyUI-MiniMax-H3-Turbo
+Upstream license: Apache License 2.0.
+
+This project also vendors the AdaLN port core from:
+  ComfyUI-PlagueKind-Nodes / H3 AdaLN LoRA Fix
+  https://github.com/PlagueKind/ComfyUI-PlagueKind-Nodes
+Upstream license: MIT License, Copyright (c) 2026 PlagueKind.
+The vendored files are under plaguekind_h3_adaln/ and retain the upstream MIT
+license in plaguekind_h3_adaln/LICENSE.
+
+MiniMax model weights, Turbo LoRA weights, H3-Optimizations, and the
+h3_silu_temb_grid.safetensors data file are not redistributed by this repository.
