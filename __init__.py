@@ -10,8 +10,8 @@ H3 Turbo LoRA Bridge
 MiniMax-H3 LoRA bridge for full-width AdaLN LoRAs used with pruned/curve H3
 checkpoints.
 
-v0.6.26.1 keeps the v0.6.26 integrated path and the PlagueKind H3 AdaLN
-LoRA port into one node:
+v0.6.26.5 keeps the integrated v0.6.26 path and adds the tested adaptive
+OOM-only backbone fallback while retaining the native AdaLN handoff + curve port:
   * the 208 non-AdaLN backbone modules keep the proven H3-Turbo custom routing
     (activation-space bypass plus native FC2 merge);
   * the 51 AdaLN adapters are first attached as ordinary ComfyUI LoRA patches;
@@ -41,7 +41,7 @@ import folder_paths
 
 from .plaguekind_h3_adaln import adaln_patch as _adaln_patch
 
-VERSION = "0.6.26.1"
+VERSION = "0.6.26.5"
 PREFIX = "[H3TurboLoRA]"
 
 _BACKEND_MODULE = None
@@ -59,6 +59,222 @@ def _warn(msg: str):
 
 def _error(msg: str):
     print(f"{PREFIX}[ERROR] {msg}", flush=True)
+
+
+# OOM-only activation-space LoRA bypass protection ------------------------------
+#
+# The normal H3 Turbo _FrugalLoRA path is already the preferred path: it preserves
+# the upstream GEMM shapes and therefore the upstream speed/numerical behavior.
+# v0.6.26.4 keeps that one-shot path whenever the full LoRA delta is allocatable.
+# There is no fixed size threshold.
+#
+# After the base projection is produced, we estimate currently allocatable CUDA
+# headroom as driver-free memory plus unused PyTorch-reserved memory.  If the full
+# delta should fit, we execute the exact upstream expression unchanged.  If it
+# clearly cannot fit (or the optimistic full allocation still raises CUDA OOM),
+# only then do we fall back to bounded row slabs.  The low-rank down(x) projection
+# is computed once at full row count; only the huge up(...) projection is chunked.
+# This keeps non-OOM workflows on the exact .1 path while making the OOM fallback
+# cheaper than the .2 chunk-down-and-up implementation.
+_OOM_BYPASS_INSTALLED = False
+_OOM_BYPASS_FIRST_FALLBACK = False
+# Adaptive fallback policy: v0.6.21.4 used a ~256 MiB full-width
+# delta scratch slab and measured faster on the known heavy workflow.  Keep
+# v0.6.26.4's OOM-only trigger, but size the fallback by bytes rather than a
+# fixed row count.  This does not touch the normal one-shot path.
+_OOM_BYPASS_CHUNK_BYTES = 256 * 1024 * 1024
+_OOM_BYPASS_MIN_CHUNK_BYTES = 16 * 1024 * 1024
+# Shapes that have proven unable to allocate the full-width up-projection in this
+# process.  Keying by activation/output geometry (not LoRA rank) lets all H3 blocks
+# with the same huge output shape learn from the first real OOM.  Smaller/different
+# workflows remain on the untouched upstream one-shot path.
+_OOM_BYPASS_FAILED_SHAPES = set()
+
+
+def _cuda_allocatable_headroom(device):
+    """Best-effort bytes available to the current PyTorch allocator."""
+    try:
+        free_bytes, _total_bytes = torch.cuda.mem_get_info(device)
+        reserved = torch.cuda.memory_reserved(device)
+        allocated = torch.cuda.memory_allocated(device)
+        reusable_reserved = max(0, int(reserved) - int(allocated))
+        return max(0, int(free_bytes)) + reusable_reserved
+    except Exception:
+        return None
+
+
+def _install_oom_safe_frugal_bypass(backend):
+    """Keep upstream one-shot LoRA math unless the full delta cannot fit."""
+    global _OOM_BYPASS_INSTALLED
+
+    frugal_cls = getattr(backend, "_FrugalLoRA", None)
+    if frugal_cls is None:
+        _warn(
+            "OOM-safe bypass protection unavailable: H3 Turbo backend exposes no "
+            "_FrugalLoRA class."
+        )
+        return False
+
+    current = getattr(frugal_cls, "bypass_forward", None)
+    if current is None:
+        _warn("OOM-safe bypass protection unavailable: _FrugalLoRA has no bypass_forward.")
+        return False
+    if (
+        getattr(current, "_h3turbo_oom_safe_bypass", False)
+        and getattr(current, "_h3turbo_oom_safe_bypass_version", None) == VERSION
+    ):
+        _OOM_BYPASS_INSTALLED = True
+        return True
+
+    # Unwrap an older v0.6.26.x experimental OOM wrapper if this module is
+    # reloaded in the same Python process. A normal ComfyUI restart is already
+    # pristine, but this avoids silently retaining the previous 1024-row policy.
+    upstream = getattr(current, "_h3turbo_oom_safe_bypass_upstream", current)
+
+    def oom_safe_bypass_forward(self, org_forward, x, *args, **kwargs):
+        global _OOM_BYPASS_FIRST_FALLBACK
+
+        # Preserve upstream behavior for convolutional or unknown adapter layouts.
+        if getattr(self, "is_conv", False):
+            return upstream(self, org_forward, x, *args, **kwargs)
+
+        weights = getattr(self, "weights", None)
+        if not isinstance(weights, (tuple, list)) or len(weights) < 3:
+            return upstream(self, org_forward, x, *args, **kwargs)
+
+        up, down, alpha = weights[0], weights[1], weights[2]
+        if not (torch.is_tensor(up) and torch.is_tensor(down) and torch.is_tensor(x)):
+            return upstream(self, org_forward, x, *args, **kwargs)
+        if x.ndim < 2 or int(x.shape[-1]) != int(down.shape[-1]):
+            return upstream(self, org_forward, x, *args, **kwargs)
+
+        rank = int(down.shape[0])
+        if rank <= 0:
+            raise RuntimeError("H3 Turbo LoRA OOM-safe bypass found non-positive LoRA rank.")
+
+        scale = (alpha / rank if alpha is not None else 1.0) * getattr(self, "multiplier", 1.0)
+        down = down.to(dtype=x.dtype)
+        up = up.to(dtype=x.dtype)
+
+        # This is exactly where upstream _FrugalLoRA computes base_out before its
+        # nested F.linear(F.linear(...)) delta expression.
+        base_out = org_forward(x, *args, **kwargs)
+
+        rows = int(x.numel() // x.shape[-1])
+        out_features = int(up.shape[0])
+        element_size = int(x.element_size())
+        projected_bytes = rows * out_features * element_size
+        lowrank_bytes = rows * rank * element_size
+
+        # Preserve the exact upstream one-shot GEMM whenever it should fit.  CUDA
+        # allocator headroom is only an aggregate estimate: a multi-GiB allocation
+        # can still fail when reusable cached blocks are fragmented.  Learn that
+        # failure once per activation/output geometry so later H3 blocks/steps do
+        # not repeatedly pay for the same doomed cudaMalloc + empty_cache cycle.
+        device_index = x.device.index if x.is_cuda else -1
+        shape_key = (
+            int(device_index if device_index is not None else 0),
+            str(x.dtype),
+            rows,
+            int(x.shape[-1]),
+            out_features,
+            element_size,
+        )
+        known_oom_shape = shape_key in _OOM_BYPASS_FAILED_SHAPES
+        headroom = _cuda_allocatable_headroom(x.device) if x.is_cuda else None
+        should_try_full = (
+            not known_oom_shape
+            and (headroom is None or headroom >= (projected_bytes + lowrank_bytes))
+        )
+        learned_oom_now = False
+        if should_try_full:
+            try:
+                return base_out.add_(F.linear(F.linear(x, down), up), alpha=scale)
+            except torch.OutOfMemoryError:
+                if not x.is_cuda:
+                    raise
+                _OOM_BYPASS_FAILED_SHAPES.add(shape_key)
+                learned_oom_now = True
+                # Do this once for the newly learned failing shape.  Subsequent
+                # blocks/steps with the same geometry skip the doomed full attempt
+                # entirely, so they also avoid repeated allocator-cache flushes.
+                torch.cuda.empty_cache()
+                headroom = _cuda_allocatable_headroom(x.device)
+
+        # Fallback is intentionally restricted to ordinary contiguous H3 linear
+        # activations.  We do not silently reshape/copy unusual multi-GiB layouts.
+        if (
+            not torch.is_tensor(base_out)
+            or base_out.ndim < 2
+            or int(base_out.shape[-1]) != out_features
+            or int(base_out.numel() // base_out.shape[-1]) != rows
+            or not x.is_contiguous()
+            or not base_out.is_contiguous()
+        ):
+            raise RuntimeError(
+                "H3 Turbo LoRA OOM fallback requires contiguous linear input/output; "
+                "refusing an implicit oversized reshape copy."
+            )
+
+        x2 = x.view(rows, x.shape[-1])
+        out2 = base_out.view(rows, out_features)
+
+        # Compute the tiny rank-space projection once, matching the first GEMM of
+        # the upstream expression. Only the full-width up-projection is chunked.
+        #
+        # Use a bounded ~256 MiB scratch budget rather than a fixed row count.
+        # This keeps the temporary up-projection large enough for good GEMM efficiency
+        # while remaining bounded under the OOM-only fallback.
+        low = F.linear(x2, down)
+        bytes_per_row = max(1, out_features * element_size)
+        chunk_budget = int(_OOM_BYPASS_CHUNK_BYTES)
+        if headroom is not None:
+            # Stay conservative if fallback happens under unusually tight memory.
+            # On the measured heavy workflow this still resolves to the full
+            # 256 MiB budget; the cap only shrinks when allocator headroom is low.
+            safe_from_headroom = max(
+                int(_OOM_BYPASS_MIN_CHUNK_BYTES),
+                int(headroom) // 4,
+            )
+            chunk_budget = min(chunk_budget, safe_from_headroom)
+        chunk_rows = max(1, chunk_budget // bytes_per_row)
+        if chunk_rows >= 256:
+            chunk_rows = max(256, (chunk_rows // 256) * 256)
+        chunk_rows = min(rows, int(chunk_rows))
+        chunk_count = (rows + chunk_rows - 1) // chunk_rows
+
+        for start in range(0, rows, chunk_rows):
+            end = min(rows, start + chunk_rows)
+            delta = F.linear(low[start:end], up)
+            out2[start:end].add_(delta, alpha=scale)
+            del delta
+        del low
+
+        if not _OOM_BYPASS_FIRST_FALLBACK:
+            _OOM_BYPASS_FIRST_FALLBACK = True
+            headroom_text = "unknown" if headroom is None else f"{headroom / (1024**3):.2f} GiB"
+            _info(
+                "OOM-only chunked backbone bypass first-forward OK: "
+                f"rows={rows}, out_features={out_features}, rank={rank}, "
+                f"projected_full_delta={projected_bytes / (1024**3):.2f} GiB, "
+                f"allocatable_headroom={headroom_text}, chunk_rows={chunk_rows}, "
+                f"chunks={chunk_count}, scratch_budget≈{chunk_budget / (1024**2):.0f} MiB, "
+                f"learned_oom_shape={'yes' if learned_oom_now else 'cached'}; "
+                "full down(x) preserved, only up-projection chunked."
+            )
+        return base_out
+
+    oom_safe_bypass_forward._h3turbo_oom_safe_bypass = True
+    oom_safe_bypass_forward._h3turbo_oom_safe_bypass_version = VERSION
+    oom_safe_bypass_forward._h3turbo_oom_safe_bypass_upstream = upstream
+    frugal_cls.bypass_forward = oom_safe_bypass_forward
+    _OOM_BYPASS_INSTALLED = True
+    _info(
+        "OOM-only backbone bypass protection installed: upstream one-shot LoRA path "
+        "is preserved whenever allocatable; fallback chunks only the up-projection "
+        f"with an adaptive <= {_OOM_BYPASS_CHUNK_BYTES // (1024**2)} MiB scratch budget."
+    )
+    return True
 
 
 # H3-Optimizations compatibility -------------------------------------------------
@@ -1679,7 +1895,7 @@ def _apply_normalized_h3_lora(
 
         _info(
             "Backbone patches validated: "
-            f"{n_bypass} bypass adapters, {len(injections)} injections, "
+            f"{n_bypass} bypass adapters, injection hooks={len(injections)}, "
             f"{n_merged} INT8-fused/merged modules; "
             f"total={n_bypass + n_merged}/{len(backbone)}."
         )
@@ -1830,12 +2046,29 @@ def _apply_integrated_adaln_fix(model, mode: str):
             "[H3AdaLN]   ... and %d more", len(report["notes"]) - 8
         )
 
+    effective_mode = report.get("effective_mode")
+    ported = int(report.get("ported", 0) or 0)
+    stripped = int(report.get("stripped", 0) or 0)
+    unportable = int(report.get("unportable", 0) or 0)
+    residual = report.get("residual")
+
     _info(
         "Integrated AdaLN fix complete: "
-        f"mode={mode}, effective_mode={report.get('effective_mode')}, "
-        f"ported={report.get('ported', 0)}, stripped={report.get('stripped', 0)}, "
-        f"keys={report.get('keys', 0)}, residual={report.get('residual')}"
+        f"mode={mode}, effective_mode={effective_mode}, "
+        f"ported={ported}, stripped={stripped}, unportable={unportable}, "
+        f"keys={report.get('keys', 0)}, residual={residual}"
     )
+
+    # A degraded port must never look like a successful AdaLN apply, even when
+    # verbose console logging is disabled. Normal accepted residuals remain INFO.
+    if mode == "port" and (effective_mode != "port" or stripped > 0 or unportable > 0):
+        _warn(
+            "AdaLN PORT DEGRADED: "
+            f"effective_mode={effective_mode}, ported={ported}, "
+            f"stripped={stripped}, unportable={unportable}, residual={residual}. "
+            "AdaLN effect may be partial or disabled; inspect the H3AdaLN notes above."
+        )
+
     return patched, report
 
 
@@ -1904,7 +2137,7 @@ class SilverOxidesH3FullAdaLNLoRALoader:
             f"Preset: adaln_strength={adaln_strength:.2f}, "
             f"backbone_strength={backbone_strength:.2f}, "
             f"adaln_fix_mode={adaln_fix_mode}, "
-            "custom backbone + native AdaLN handoff + integrated fix"
+            "adaptive OOM-only backbone fallback + native AdaLN handoff + integrated curve fix"
         )
 
         try:
@@ -1941,6 +2174,7 @@ class SilverOxidesH3FullAdaLNLoRALoader:
                 )
 
             backend = _load_backend_module()
+            _install_oom_safe_frugal_bypass(backend)
             _install_h3_memory_fc1_bridge(backend)
 
             result = _apply_normalized_h3_lora(
