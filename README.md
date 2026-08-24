@@ -5,6 +5,7 @@ Custom LoRA loader to run these loras [https://huggingface.co/silveroxides/MiniM
 # Important 
 
 create folder: h3_adaln in "ComfyUI/models" folder
+
 https://huggingface.co/deAPI-ai/minimax-h3-33b-int8/resolve/main/loras/h3_silu_temb_grid.safetensors put this file in h3_adaln folder
 
 # Settings
