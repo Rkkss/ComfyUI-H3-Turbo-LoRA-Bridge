@@ -24,7 +24,7 @@ Steps 4-8
 ```text
 UNETLoader
   -> H3 Turbo LoRA Bridge
-  -> Comfy Load Lora
+  -> Comfy Load Lora (if any)
   -> MiniMaxH3SigmaShift
   -> sampler
 ```
