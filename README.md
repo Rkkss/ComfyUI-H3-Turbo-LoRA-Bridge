@@ -15,6 +15,8 @@ Backbone 0.25-0.45 (0.45 is most stable based on my tests; other values can impr
 ModelsamplingminimaxH3 6/3
 
 Sampler Euler - Simple/Beta  (haven't tested others/ LCM seems ok)
+Steps 4-8
+
 ![LoRA Bridge Preview](Previews/preview.jpg)
 
 ## Recommended graph
