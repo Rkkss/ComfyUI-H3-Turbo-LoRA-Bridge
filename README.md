@@ -15,7 +15,6 @@ ModelsamplingminimaxH3 6/3
 
 Sampler Euler - Simple/Beta  (haven't tested others/ LCM seems ok)
 
-![LoRA Bridge Preview](previews/preview.jpg)
 
 ## Recommended graph
 
