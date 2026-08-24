@@ -14,7 +14,7 @@ Backbone_multiplier 0.25-0.45 (0.45 is most stable based on my tests; other valu
 ModelsamplingminimaxH3 6/3
 
 Sampler Euler - Simple/Beta  (haven't tested others/ LCM seems ok)
-![LoRA Bridge Preview](previews/preview.jpg)
+![LoRA Bridge Preview](/previews/preview.jpg)
 
 
 ## Recommended graph
