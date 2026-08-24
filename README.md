@@ -28,7 +28,7 @@ UNETLoader
   -> MiniMaxH3SigmaShift
   -> sampler
 ```
-
+Put it in front of other lora loaders to be safe.
 Do **not** use this loader to load normal loras
 
 ## Installation
