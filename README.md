@@ -12,9 +12,9 @@ https://huggingface.co/deAPI-ai/minimax-h3-33b-int8/resolve/main/loras/h3_silu_t
 
 Backbone 0.25-0.45 
 
-0.45 is the most stable, as in "no_artifact". It works as pseudo "model_strength". 
+Default 0.45 is high IMO, but it's safe-ish, as in "no_artifact". It works as pseudo "model_strength". 
 
-Other values can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it
+Other numbers can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it
 
 I'm unsure if the model or loader causes it.
 
