@@ -12,7 +12,12 @@ https://huggingface.co/deAPI-ai/minimax-h3-33b-int8/resolve/main/loras/h3_silu_t
 
 Backbone 0.25-0.45 
 
-(0.45 is the most stable based on my tests; other values can improve quality/prompt but are more prone to Artifacts. It works as pseudo "model_strength". Lower value to see if you can get away with it)
+0.45 is the most stable, as in "no_artifact". It works as pseudo "model_strength". 
+
+Other values can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it
+
+I'm unsure if the model or loader causes it.
+
 
 ModelsamplingminimaxH3 6/3
 
