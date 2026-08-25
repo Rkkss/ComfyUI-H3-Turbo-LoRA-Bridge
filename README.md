@@ -14,7 +14,10 @@ https://huggingface.co/deAPI-ai/minimax-h3-33b-int8/resolve/main/loras/h3_silu_t
 Backbone 0.25-0.45 .  It works as pseudo "model_strength". 
 
 Default 0.45 is considered high IMO, but it's also safe-ish, as in it's less likely to introduce "artifact".
-Recommend setting: FL2V : 0.25-0.4
+Recommend setting: 
+                  
+                   FL2V : 0.25-0.4
+                  
                    Ref2V : 0.35-0.45
 
 
