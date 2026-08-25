@@ -25,7 +25,7 @@ LoRA contains 51 AdaLN modules, doesn't seem to do much.
 
 ModelsamplingminimaxH3 6/3
 
-Sampler Euler - Simple/Beta  (haven't tested others/ LCM seems ok)
+Sampler Euler - Simple/Beta  (haven't tested others/ LCM, beta57 seems ok)
 Steps 4-8
 ## Recommended graph
 
