@@ -18,14 +18,12 @@ Other values can improve quality/prompt but are more prone to Artifacts. Lower v
 
 I'm unsure if the model or loader causes it.
 
+![LoRA Bridge Preview](Previews/preview.jpg)
 
 ModelsamplingminimaxH3 6/3
 
 Sampler Euler - Simple/Beta  (haven't tested others/ LCM seems ok)
 Steps 4-8
-
-![LoRA Bridge Preview](Previews/preview.jpg)
-
 ## Recommended graph
 
 ```text
