@@ -14,7 +14,7 @@ Backbone 0.25-0.45 .  It works as pseudo "model_strength".
 
 Default 0.45 is considered high IMO, but it's also safe-ish, as in it's less likely to introduce "artifact".
 
-Other numbers can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it. If it's used with Ref2VA model, you need a high-ish value
+Other numbers can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it. If you use it with  Ref2VA model, you need a high-ish value
 
 I'm unsure if the model or loader causes it.
 
