@@ -19,8 +19,6 @@ Other numbers can improve quality/prompt but are more prone to Artifacts. Lower 
 
 If you use it with  Ref2VA workflow, you need a high-ish value.
 
-LoRA contains 51 AdaLN modules, doesn't seem to do much.
-
 ![LoRA Bridge Preview](Previews/preview.jpg)
 
 ModelsamplingminimaxH3 6/3
