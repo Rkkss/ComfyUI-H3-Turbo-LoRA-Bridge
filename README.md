@@ -16,7 +16,7 @@ Default 0.45 is considered high IMO, but it's also safe-ish, as in it's less lik
 
 Other numbers can improve quality/prompt but are more prone to Artifacts. Lower value to see if you can get away with it.
 
-If you use it with  Ref2VA model, you need a high-ish value.
+If you use it with  Ref2VA workflow, you need a high-ish value.
 
 
 ![LoRA Bridge Preview](Previews/preview.jpg)
