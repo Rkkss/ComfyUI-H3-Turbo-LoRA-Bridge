@@ -23,8 +23,6 @@ Recommend setting:
 
 ![LoRA Bridge Preview](Previews/preview.jpg)
 
-ModelsamplingminimaxH3 6/3
-
 Sampler Euler - Simple/Beta  (haven't tested others/ LCM, beta57 seems ok)
 Steps 4-8
 ## Recommended graph
