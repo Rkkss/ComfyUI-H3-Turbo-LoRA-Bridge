@@ -23,7 +23,7 @@ Recommend setting:
 
 ![LoRA Bridge Preview](Previews/preview.jpg)
 
-Sampler Euler - Simple/Beta  (haven't tested others/ LCM, beta57 seems ok)
+Sampler Euler - Simple/Beta  (haven't tested others/ beta57 seems ok)
 Steps 4-8
 ## Recommended graph
 
